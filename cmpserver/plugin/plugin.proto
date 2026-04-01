@@ -41,6 +41,30 @@ message EnvEntry {
 message ManifestResponse {
     repeated string manifests = 1;
     string sourceType = 2;
+    // revision is the resolved revision of the fetched source as determined by the plugin
+    // (e.g. an OCI digest "sha256:…"). Only meaningful when the plugin declares spec.fetch.
+    // When non-empty, this value is used as the application revision shown in the ArgoCD UI
+    // instead of the raw tag or revision string passed in the request.
+    string revision = 3;
+    // verifyResult is the output of source verification performed by the plugin (e.g. cosign
+    // attestation output). Only meaningful when the plugin declares spec.fetch. When non-empty,
+    // this value is shown in the ArgoCD UI as the verification result instead of the git
+    // verify-commit output.
+    string verifyResult = 4;
+    // sourceMetadata contains optional human-readable metadata about the fetched source. Only
+    // populated when the plugin declares spec.fetch and writes a fetch result file with metadata.
+    SourceMetadata sourceMetadata = 5;
+}
+
+// SourceMetadata contains optional human-readable information about a source fetched by a
+// fetch-capable CMP plugin. The fields mirror OCI image annotation conventions.
+message SourceMetadata {
+    string createdAt = 1;
+    string authors = 2;
+    string version = 3;
+    string description = 4;
+    string sourceURL = 5;
+    string docsURL = 6;
 }
 
 message RepositoryResponse {
@@ -62,6 +86,14 @@ message File {
 message CheckPluginConfigurationResponse {
     bool isDiscoveryConfigured = 1;
     bool provideGitCreds = 2;
+    // handlesFetch indicates that the plugin manages source fetching itself via spec.fetch.
+    // When true, the repo-server sends only stream metadata (no file tgz) and the plugin
+    // runs its fetch command before generate.
+    //
+    // NOTE: plugins that declare handlesFetch=true must be explicitly referenced by name in
+    // the Application resource (spec.source.plugin.name). Auto-discovery cannot work for
+    // sources that have not yet been fetched.
+    bool handlesFetch = 3;
 }
 
 // ConfigManagementPlugin Service

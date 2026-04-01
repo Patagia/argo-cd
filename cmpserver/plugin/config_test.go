@@ -147,6 +147,48 @@ spec:
 				},
 			},
 		},
+		{
+			name: "valid config with fetch",
+			fileContents: `
+kind: ConfigManagementPlugin
+metadata:
+  name: name
+spec:
+  fetch:
+    command: [fetch-script]
+  generate:
+    command: [generate-script]
+`,
+			expected: &PluginConfig{
+				TypeMeta: metav1.TypeMeta{
+					Kind: ConfigManagementPluginKind,
+				},
+				Metadata: metav1.ObjectMeta{
+					Name: "name",
+				},
+				Spec: PluginConfigSpec{
+					Fetch:    Command{Command: []string{"fetch-script"}},
+					Generate: Command{Command: []string{"generate-script"}},
+				},
+			},
+		},
+		{
+			name: "fetch and discover are mutually exclusive",
+			fileContents: `
+kind: ConfigManagementPlugin
+metadata:
+  name: name
+spec:
+  fetch:
+    command: [fetch-script]
+  generate:
+    command: [generate-script]
+  discover:
+    fileName: "*.yaml"
+`,
+			expected:    nil,
+			expectedErr: "invalid plugin configuration file. spec.fetch and spec.discover are mutually exclusive: a fetch-capable plugin must be referenced by name (spec.source.plugin.name) in the Application resource",
+		},
 	}
 
 	for _, tc := range testCases {

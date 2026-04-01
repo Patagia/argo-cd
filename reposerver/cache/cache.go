@@ -470,6 +470,27 @@ func (c *Cache) SetRevisionMetadata(repoURL, revision string, item *appv1.Revisi
 		&cacheutil.CacheActionOpts{Expiration: c.repoCacheExpiration})
 }
 
+func pluginSourceMetadataKey(repoURL, revision string) string {
+	return fmt.Sprintf("pluginsourcemeta|%s|%s", repoURL, revision)
+}
+
+// GetPluginSourceMetadata retrieves OCIMetadata that was stored by a fetch-capable CMP plugin
+// for the given source URL and resolved revision (e.g. an OCI digest). Returns ErrCacheMiss
+// when no entry exists.
+func (c *Cache) GetPluginSourceMetadata(repoURL, revision string) (*appv1.OCIMetadata, error) {
+	item := &appv1.OCIMetadata{}
+	return item, c.cache.GetItem(pluginSourceMetadataKey(repoURL, revision), item)
+}
+
+// SetPluginSourceMetadata stores OCIMetadata reported by a fetch-capable CMP plugin so it can
+// later be served via GetOCIMetadata for the UI's revision panel.
+func (c *Cache) SetPluginSourceMetadata(repoURL, revision string, item *appv1.OCIMetadata) error {
+	return c.cache.SetItem(
+		pluginSourceMetadataKey(repoURL, revision),
+		item,
+		&cacheutil.CacheActionOpts{Expiration: c.repoCacheExpiration})
+}
+
 func revisionChartDetailsKey(repoURL, chart, revision string) string {
 	return fmt.Sprintf("chartdetails|%s|%s|%s", repoURL, chart, revision)
 }

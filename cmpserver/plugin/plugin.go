@@ -216,9 +216,19 @@ func (s *Service) generateManifestGeneric(stream GenerateManifestStream) error {
 	}
 	defer cleanup()
 
-	metadata, err := cmp.ReceiveRepoStream(ctx, stream, workDir, s.initConstants.PluginConfig.Spec.PreserveFileMode)
-	if err != nil {
-		return fmt.Errorf("generate manifest error receiving stream: %w", err)
+	config := s.initConstants.PluginConfig
+	var metadata *apiclient.ManifestRequestMetadata
+	if len(config.Spec.Fetch.Command) > 0 {
+		// Plugin handles fetch: expect metadata-only stream, no file tgz.
+		metadata, err = cmp.ReceiveMetadataOnlyStream(ctx, stream)
+		if err != nil {
+			return fmt.Errorf("generate manifest error receiving metadata stream: %w", err)
+		}
+	} else {
+		metadata, err = cmp.ReceiveRepoStream(ctx, stream, workDir, config.Spec.PreserveFileMode)
+		if err != nil {
+			return fmt.Errorf("generate manifest error receiving stream: %w", err)
+		}
 	}
 
 	appPath := filepath.Clean(filepath.Join(workDir, metadata.AppRelPath))
@@ -250,7 +260,18 @@ func (s *Service) generateManifest(ctx context.Context, appDir string, envEntrie
 	config := s.initConstants.PluginConfig
 
 	env := append(os.Environ(), environ(envEntries)...)
-	if len(config.Spec.Init.Command) > 0 {
+	if len(config.Spec.Fetch.Command) > 0 {
+		// Fetch phase: plugin downloads source files into appDir before generating.
+		// Ensure appDir exists since no files were extracted from a tarball.
+		if err := os.MkdirAll(appDir, 0o700); err != nil {
+			return &apiclient.ManifestResponse{}, fmt.Errorf("error creating app dir for fetch: %w", err)
+		}
+		_, err := runCommand(ctx, config.Spec.Fetch, appDir, env)
+		if err != nil {
+			return &apiclient.ManifestResponse{}, err
+		}
+		// When fetch is present, init is skipped (fetch subsumes the setup role).
+	} else if len(config.Spec.Init.Command) > 0 {
 		_, err := runCommand(ctx, config.Spec.Init, appDir, env)
 		if err != nil {
 			return &apiclient.ManifestResponse{}, err
@@ -272,9 +293,33 @@ func (s *Service) generateManifest(ctx context.Context, appDir string, envEntrie
 		return &apiclient.ManifestResponse{}, err
 	}
 
-	return &apiclient.ManifestResponse{
+	response := &apiclient.ManifestResponse{
 		Manifests: manifests,
-	}, err
+	}
+
+	// When the plugin manages fetching, read the optional structured result file it may have
+	// written during the fetch or generate phase to communicate resolved revision / verify result.
+	if len(config.Spec.Fetch.Command) > 0 {
+		fetchResult, readErr := cmp.ReadFetchResult(appDir)
+		if readErr != nil {
+			log.Warnf("Failed to read fetch result file: %v", readErr)
+		} else if fetchResult != nil {
+			response.Revision = fetchResult.Revision
+			response.VerifyResult = fetchResult.VerifyResult
+			if fetchResult.Metadata != nil {
+				response.SourceMetadata = &apiclient.SourceMetadata{
+					CreatedAt:   fetchResult.Metadata.CreatedAt,
+					Authors:     fetchResult.Metadata.Authors,
+					Version:     fetchResult.Metadata.Version,
+					Description: fetchResult.Metadata.Description,
+					SourceURL:   fetchResult.Metadata.SourceURL,
+					DocsURL:     fetchResult.Metadata.DocsURL,
+				}
+			}
+		}
+	}
+
+	return response, nil
 }
 
 type MatchRepositoryStream interface {
@@ -438,7 +483,12 @@ func getParametersAnnouncement(ctx context.Context, appDir string, announcements
 
 func (s *Service) CheckPluginConfiguration(_ context.Context, _ *empty.Empty) (*apiclient.CheckPluginConfigurationResponse, error) {
 	isDiscoveryConfigured := s.isDiscoveryConfigured()
-	response := &apiclient.CheckPluginConfigurationResponse{IsDiscoveryConfigured: isDiscoveryConfigured, ProvideGitCreds: s.initConstants.PluginConfig.Spec.ProvideGitCreds}
+	handlesFetch := len(s.initConstants.PluginConfig.Spec.Fetch.Command) > 0
+	response := &apiclient.CheckPluginConfigurationResponse{
+		IsDiscoveryConfigured: isDiscoveryConfigured,
+		ProvideGitCreds:       s.initConstants.PluginConfig.Spec.ProvideGitCreds,
+		HandlesFetch:          handlesFetch,
+	}
 
 	return response, nil
 }

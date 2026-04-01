@@ -263,11 +263,24 @@ func (m *EnvEntry) GetValue() string {
 }
 
 type ManifestResponse struct {
-	Manifests            []string `protobuf:"bytes,1,rep,name=manifests,proto3" json:"manifests,omitempty"`
-	SourceType           string   `protobuf:"bytes,2,opt,name=sourceType,proto3" json:"sourceType,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
+	Manifests  []string `protobuf:"bytes,1,rep,name=manifests,proto3" json:"manifests,omitempty"`
+	SourceType string   `protobuf:"bytes,2,opt,name=sourceType,proto3" json:"sourceType,omitempty"`
+	// revision is the resolved revision of the fetched source as determined by the plugin
+	// (e.g. an OCI digest "sha256:…"). Only meaningful when the plugin declares spec.fetch.
+	// When non-empty, this value is used as the application revision shown in the ArgoCD UI
+	// instead of the raw tag or revision string passed in the request.
+	Revision string `protobuf:"bytes,3,opt,name=revision,proto3" json:"revision,omitempty"`
+	// verifyResult is the output of source verification performed by the plugin (e.g. cosign
+	// attestation output). Only meaningful when the plugin declares spec.fetch. When non-empty,
+	// this value is shown in the ArgoCD UI as the verification result instead of the git
+	// verify-commit output.
+	VerifyResult string `protobuf:"bytes,4,opt,name=verifyResult,proto3" json:"verifyResult,omitempty"`
+	// sourceMetadata contains optional human-readable metadata about the fetched source.
+	// Only populated when the plugin declares spec.fetch and writes a fetch result file.
+	SourceMetadata       *SourceMetadata `protobuf:"bytes,5,opt,name=sourceMetadata,proto3" json:"sourceMetadata,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}        `json:"-"`
+	XXX_unrecognized     []byte          `json:"-"`
+	XXX_sizecache        int32           `json:"-"`
 }
 
 func (m *ManifestResponse) Reset()         { *m = ManifestResponse{} }
@@ -313,6 +326,116 @@ func (m *ManifestResponse) GetManifests() []string {
 func (m *ManifestResponse) GetSourceType() string {
 	if m != nil {
 		return m.SourceType
+	}
+	return ""
+}
+
+func (m *ManifestResponse) GetRevision() string {
+	if m != nil {
+		return m.Revision
+	}
+	return ""
+}
+
+func (m *ManifestResponse) GetVerifyResult() string {
+	if m != nil {
+		return m.VerifyResult
+	}
+	return ""
+}
+
+func (m *ManifestResponse) GetSourceMetadata() *SourceMetadata {
+	if m != nil {
+		return m.SourceMetadata
+	}
+	return nil
+}
+
+// SourceMetadata contains optional human-readable information about a source fetched by a
+// fetch-capable CMP plugin. The fields mirror OCI image annotation conventions.
+type SourceMetadata struct {
+	CreatedAt            string   `protobuf:"bytes,1,opt,name=createdAt,proto3" json:"createdAt,omitempty"`
+	Authors              string   `protobuf:"bytes,2,opt,name=authors,proto3" json:"authors,omitempty"`
+	Version              string   `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
+	Description          string   `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	SourceURL            string   `protobuf:"bytes,5,opt,name=sourceURL,proto3" json:"sourceURL,omitempty"`
+	DocsURL              string   `protobuf:"bytes,6,opt,name=docsURL,proto3" json:"docsURL,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *SourceMetadata) Reset()         { *m = SourceMetadata{} }
+func (m *SourceMetadata) String() string { return proto.CompactTextString(m) }
+func (*SourceMetadata) ProtoMessage()    {}
+func (*SourceMetadata) Descriptor() ([]byte, []int) {
+	return fileDescriptor_b21875a7079a06ed, []int{8}
+}
+func (m *SourceMetadata) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *SourceMetadata) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_SourceMetadata.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *SourceMetadata) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_SourceMetadata.Merge(m, src)
+}
+func (m *SourceMetadata) XXX_Size() int {
+	return m.Size()
+}
+func (m *SourceMetadata) XXX_DiscardUnknown() {
+	xxx_messageInfo_SourceMetadata.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_SourceMetadata proto.InternalMessageInfo
+
+func (m *SourceMetadata) GetCreatedAt() string {
+	if m != nil {
+		return m.CreatedAt
+	}
+	return ""
+}
+
+func (m *SourceMetadata) GetAuthors() string {
+	if m != nil {
+		return m.Authors
+	}
+	return ""
+}
+
+func (m *SourceMetadata) GetVersion() string {
+	if m != nil {
+		return m.Version
+	}
+	return ""
+}
+
+func (m *SourceMetadata) GetDescription() string {
+	if m != nil {
+		return m.Description
+	}
+	return ""
+}
+
+func (m *SourceMetadata) GetSourceURL() string {
+	if m != nil {
+		return m.SourceURL
+	}
+	return ""
+}
+
+func (m *SourceMetadata) GetDocsURL() string {
+	if m != nil {
+		return m.DocsURL
 	}
 	return ""
 }
@@ -470,11 +593,19 @@ func (m *File) GetChunk() []byte {
 
 // CheckPluginConfigurationResponse contains a list of plugin configuration flags.
 type CheckPluginConfigurationResponse struct {
-	IsDiscoveryConfigured bool     `protobuf:"varint,1,opt,name=isDiscoveryConfigured,proto3" json:"isDiscoveryConfigured,omitempty"`
-	ProvideGitCreds       bool     `protobuf:"varint,2,opt,name=provideGitCreds,proto3" json:"provideGitCreds,omitempty"`
-	XXX_NoUnkeyedLiteral  struct{} `json:"-"`
-	XXX_unrecognized      []byte   `json:"-"`
-	XXX_sizecache         int32    `json:"-"`
+	IsDiscoveryConfigured bool `protobuf:"varint,1,opt,name=isDiscoveryConfigured,proto3" json:"isDiscoveryConfigured,omitempty"`
+	ProvideGitCreds       bool `protobuf:"varint,2,opt,name=provideGitCreds,proto3" json:"provideGitCreds,omitempty"`
+	// handlesFetch indicates that the plugin manages source fetching itself via spec.fetch.
+	// When true, the repo-server sends only stream metadata (no file tgz) and the plugin
+	// runs its fetch command before generate.
+	//
+	// NOTE: plugins that declare handlesFetch=true must be explicitly referenced by name in
+	// the Application resource (spec.source.plugin.name). Auto-discovery cannot work for
+	// sources that have not yet been fetched.
+	HandlesFetch         bool     `protobuf:"varint,3,opt,name=handlesFetch,proto3" json:"handlesFetch,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
 }
 
 func (m *CheckPluginConfigurationResponse) Reset()         { *m = CheckPluginConfigurationResponse{} }
@@ -524,6 +655,13 @@ func (m *CheckPluginConfigurationResponse) GetProvideGitCreds() bool {
 	return false
 }
 
+func (m *CheckPluginConfigurationResponse) GetHandlesFetch() bool {
+	if m != nil {
+		return m.HandlesFetch
+	}
+	return false
+}
+
 func init() {
 	proto.RegisterType((*AppStreamRequest)(nil), "plugin.AppStreamRequest")
 	proto.RegisterType((*ManifestRequestMetadata)(nil), "plugin.ManifestRequestMetadata")
@@ -533,54 +671,58 @@ func init() {
 	proto.RegisterType((*ParametersAnnouncementResponse)(nil), "plugin.ParametersAnnouncementResponse")
 	proto.RegisterType((*File)(nil), "plugin.File")
 	proto.RegisterType((*CheckPluginConfigurationResponse)(nil), "plugin.CheckPluginConfigurationResponse")
+	proto.RegisterType((*SourceMetadata)(nil), "plugin.SourceMetadata")
 }
 
 func init() { proto.RegisterFile("cmpserver/plugin/plugin.proto", fileDescriptor_b21875a7079a06ed) }
 
 var fileDescriptor_b21875a7079a06ed = []byte{
-	// 668 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x84, 0x54, 0xcd, 0x6e, 0xd3, 0x40,
-	0x10, 0x8e, 0x9b, 0xb4, 0x4d, 0x26, 0x95, 0x1a, 0xad, 0xa0, 0x98, 0xd0, 0x86, 0xe0, 0x03, 0xca,
-	0x05, 0x47, 0x4a, 0x7b, 0x45, 0xa2, 0x2d, 0xa1, 0x15, 0x28, 0x28, 0x72, 0xb9, 0xc0, 0x01, 0x69,
-	0xe3, 0x4c, 0x92, 0xa5, 0xf6, 0xee, 0xb2, 0x5e, 0x5b, 0x0a, 0x5c, 0x10, 0x2f, 0xc3, 0xab, 0x70,
-	0xe4, 0x11, 0x50, 0x5f, 0x83, 0x0b, 0xf2, 0xda, 0x4e, 0xa2, 0x36, 0x6d, 0x4f, 0x9e, 0xbf, 0xfd,
-	0xfc, 0xcd, 0xec, 0x37, 0x0b, 0x07, 0x7e, 0x28, 0x23, 0x54, 0x09, 0xaa, 0xae, 0x0c, 0xe2, 0x29,
-	0xe3, 0xf9, 0xc7, 0x95, 0x4a, 0x68, 0x41, 0xb6, 0x32, 0xaf, 0xd9, 0x9f, 0x32, 0x3d, 0x8b, 0x47,
-	0xae, 0x2f, 0xc2, 0x2e, 0x55, 0x53, 0x21, 0x95, 0xf8, 0x62, 0x8c, 0x17, 0xfe, 0xb8, 0x9b, 0x1c,
-	0x76, 0x15, 0x4a, 0x91, 0xc3, 0x18, 0x93, 0x69, 0xa1, 0xe6, 0x2b, 0x66, 0x06, 0xd7, 0x7c, 0x32,
-	0x15, 0x62, 0x1a, 0x60, 0xd7, 0x78, 0xa3, 0x78, 0xd2, 0xc5, 0x50, 0xea, 0x3c, 0xe9, 0xfc, 0xb0,
-	0xa0, 0x71, 0x2c, 0xe5, 0x85, 0x56, 0x48, 0x43, 0x0f, 0xbf, 0xc6, 0x18, 0x69, 0xf2, 0x12, 0xaa,
-	0x21, 0x6a, 0x3a, 0xa6, 0x9a, 0xda, 0x56, 0xdb, 0xea, 0xd4, 0x7b, 0x4f, 0xdd, 0x9c, 0xe1, 0x80,
-	0x72, 0x36, 0xc1, 0x48, 0xe7, 0xa5, 0x83, 0xbc, 0xec, 0xbc, 0xe4, 0x2d, 0x8e, 0x10, 0x07, 0x2a,
-	0x13, 0x16, 0xa0, 0xbd, 0x61, 0x8e, 0xee, 0x14, 0x47, 0xdf, 0xb0, 0x00, 0xcf, 0x4b, 0x9e, 0xc9,
-	0x9d, 0xd4, 0x60, 0x5b, 0x65, 0x10, 0xce, 0x2f, 0x0b, 0x1e, 0xdd, 0x02, 0x4b, 0x6c, 0xd8, 0xa6,
-	0x52, 0xbe, 0xa7, 0x21, 0x1a, 0x22, 0x35, 0xaf, 0x70, 0x49, 0x0b, 0x80, 0x4a, 0xe9, 0x61, 0x30,
-	0xa4, 0x7a, 0x66, 0x7e, 0x55, 0xf3, 0x56, 0x22, 0xa4, 0x09, 0x55, 0x7f, 0x86, 0xfe, 0x65, 0x14,
-	0x87, 0x76, 0xd9, 0x64, 0x17, 0x3e, 0x21, 0x50, 0x89, 0xd8, 0x37, 0xb4, 0x2b, 0x6d, 0xab, 0x53,
-	0xf6, 0x8c, 0x4d, 0x1c, 0x28, 0x23, 0x4f, 0xec, 0xcd, 0x76, 0xb9, 0x53, 0xef, 0x35, 0x0a, 0xce,
-	0x7d, 0x9e, 0xf4, 0xb9, 0x56, 0x73, 0x2f, 0x4d, 0x3a, 0x47, 0x50, 0x2d, 0x02, 0x29, 0x06, 0x5f,
-	0xd2, 0x32, 0x36, 0x79, 0x00, 0x9b, 0x09, 0x0d, 0x62, 0xcc, 0xe9, 0x64, 0x8e, 0x33, 0x84, 0xc6,
-	0xb2, 0xbd, 0x48, 0x0a, 0x1e, 0x21, 0xd9, 0x87, 0x5a, 0x98, 0xc7, 0x22, 0xdb, 0x6a, 0x97, 0x3b,
-	0x35, 0x6f, 0x19, 0x48, 0x7b, 0x8b, 0x44, 0xac, 0x7c, 0xfc, 0x30, 0x97, 0x05, 0xd8, 0x4a, 0xc4,
-	0x99, 0x00, 0xf1, 0x16, 0xb7, 0xbc, 0xc0, 0x6c, 0x43, 0x9d, 0x45, 0x17, 0xb1, 0x94, 0x42, 0x69,
-	0x1c, 0x1b, 0x62, 0x55, 0x6f, 0x35, 0x44, 0x5c, 0x20, 0x2c, 0x7a, 0xcd, 0x22, 0x5f, 0x24, 0xa8,
-	0xe6, 0x7d, 0x4e, 0x47, 0x01, 0x8e, 0x0d, 0x7e, 0xd5, 0x5b, 0x93, 0x71, 0xbe, 0x43, 0x6b, 0x48,
-	0x15, 0x0d, 0x51, 0xa3, 0x8a, 0x8e, 0x39, 0x17, 0x31, 0xf7, 0x31, 0x44, 0xbe, 0xec, 0xe3, 0x23,
-	0xec, 0xc9, 0xa2, 0x62, 0xb5, 0x20, 0x6b, 0xaa, 0xde, 0x7b, 0xe6, 0xae, 0xc8, 0x71, 0xb8, 0xae,
-	0xd2, 0xbb, 0x05, 0xc0, 0xd9, 0x87, 0x4a, 0xaa, 0x98, 0x74, 0xa8, 0xfe, 0x2c, 0xe6, 0x97, 0xa6,
-	0xa1, 0x1d, 0x2f, 0x73, 0x9c, 0x9f, 0x16, 0xb4, 0x4f, 0xd3, 0xfb, 0x1c, 0x9a, 0x8b, 0x3a, 0x15,
-	0x7c, 0xc2, 0xa6, 0xb1, 0xa2, 0x9a, 0x09, 0xbe, 0x60, 0x77, 0x04, 0x0f, 0x57, 0xba, 0x2a, 0x6a,
-	0x16, 0xb3, 0x59, 0x9f, 0x24, 0x1d, 0xd8, 0x95, 0x4a, 0x24, 0x6c, 0x8c, 0x67, 0x4c, 0x9f, 0x2a,
-	0x1c, 0x47, 0xf9, 0x88, 0xae, 0x87, 0x7b, 0xff, 0x36, 0xe0, 0x20, 0x3b, 0x38, 0xa0, 0x9c, 0x4e,
-	0x0d, 0xf1, 0x8c, 0xcf, 0x05, 0xaa, 0x84, 0xf9, 0x48, 0xde, 0x42, 0xe3, 0x0c, 0x39, 0x2a, 0xaa,
-	0xb1, 0xd0, 0x00, 0xb1, 0x0b, 0x71, 0x5d, 0xdf, 0xbb, 0xa6, 0x7d, 0x73, 0xcb, 0xb2, 0x4e, 0x9c,
-	0x52, 0xc7, 0x22, 0x9f, 0xc1, 0xbe, 0xad, 0x63, 0xb2, 0xe7, 0x66, 0x4b, 0xee, 0x16, 0x4b, 0xee,
-	0xf6, 0xd3, 0x25, 0x6f, 0x76, 0x0a, 0xc4, 0xfb, 0x66, 0xe5, 0x94, 0xc8, 0x3b, 0xd8, 0x1d, 0x50,
-	0xed, 0xcf, 0x96, 0xd2, 0xba, 0x83, 0x6a, 0xb3, 0xc8, 0xdc, 0x14, 0xa2, 0x21, 0x4b, 0xe1, 0xf1,
-	0x19, 0xea, 0xf5, 0xea, 0xb9, 0x03, 0xf6, 0x79, 0x91, 0xb9, 0x5b, 0x77, 0xe9, 0x2f, 0x4e, 0x5e,
-	0xfd, 0xbe, 0x6a, 0x59, 0x7f, 0xae, 0x5a, 0xd6, 0xdf, 0xab, 0x96, 0xf5, 0xa9, 0x77, 0xcf, 0x63,
-	0xb9, 0x7c, 0x72, 0xa9, 0x64, 0x7e, 0xc0, 0x90, 0xeb, 0xd1, 0x96, 0x99, 0xd6, 0xe1, 0xff, 0x00,
-	0x00, 0x00, 0xff, 0xff, 0xb0, 0x8d, 0xb8, 0x47, 0x90, 0x05, 0x00, 0x00,
+	// 720 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x84, 0x54, 0xcd, 0x6e, 0x1a, 0x3b,
+	0x14, 0x66, 0x02, 0x49, 0xc0, 0x44, 0x0a, 0xb2, 0xee, 0xcd, 0x9d, 0xcb, 0x4d, 0xb8, 0xdc, 0x59,
+	0x5c, 0xb1, 0xe9, 0x20, 0x91, 0x6c, 0x2b, 0x35, 0x49, 0x49, 0xa2, 0x56, 0x54, 0xc8, 0xe9, 0xa6,
+	0x5d, 0x54, 0x32, 0xc3, 0x01, 0xdc, 0xcc, 0xd8, 0xae, 0xed, 0x19, 0x89, 0x76, 0xd3, 0x47, 0xe8,
+	0x53, 0xb4, 0xaf, 0xd2, 0x65, 0x1f, 0xa1, 0xca, 0x6b, 0x74, 0x53, 0x8d, 0x67, 0x06, 0x48, 0x42,
+	0x92, 0x15, 0x3e, 0x3f, 0xfe, 0xf8, 0xbe, 0xe3, 0x6f, 0x0e, 0x3a, 0x08, 0x22, 0xa9, 0x41, 0x25,
+	0xa0, 0xba, 0x32, 0x8c, 0xa7, 0x8c, 0xe7, 0x3f, 0xbe, 0x54, 0xc2, 0x08, 0xbc, 0x95, 0x45, 0xcd,
+	0xfe, 0x94, 0x99, 0x59, 0x3c, 0xf2, 0x03, 0x11, 0x75, 0xa9, 0x9a, 0x0a, 0xa9, 0xc4, 0x7b, 0x7b,
+	0x78, 0x12, 0x8c, 0xbb, 0xc9, 0x61, 0x57, 0x81, 0x14, 0x39, 0x8c, 0x3d, 0x32, 0x23, 0xd4, 0x7c,
+	0xe5, 0x98, 0xc1, 0x35, 0xff, 0x99, 0x0a, 0x31, 0x0d, 0xa1, 0x6b, 0xa3, 0x51, 0x3c, 0xe9, 0x42,
+	0x24, 0x4d, 0x5e, 0xf4, 0x3e, 0x3b, 0xa8, 0x71, 0x2c, 0xe5, 0xa5, 0x51, 0x40, 0x23, 0x02, 0x1f,
+	0x62, 0xd0, 0x06, 0x3f, 0x45, 0xd5, 0x08, 0x0c, 0x1d, 0x53, 0x43, 0x5d, 0xa7, 0xed, 0x74, 0xea,
+	0xbd, 0x7f, 0xfd, 0x9c, 0xe1, 0x80, 0x72, 0x36, 0x01, 0x6d, 0xf2, 0xd6, 0x41, 0xde, 0x76, 0x51,
+	0x22, 0x8b, 0x2b, 0xd8, 0x43, 0x95, 0x09, 0x0b, 0xc1, 0xdd, 0xb0, 0x57, 0x77, 0x8a, 0xab, 0x67,
+	0x2c, 0x84, 0x8b, 0x12, 0xb1, 0xb5, 0x93, 0x1a, 0xda, 0x56, 0x19, 0x84, 0xf7, 0xcd, 0x41, 0x7f,
+	0xdd, 0x03, 0x8b, 0x5d, 0xb4, 0x4d, 0xa5, 0x7c, 0x45, 0x23, 0xb0, 0x44, 0x6a, 0xa4, 0x08, 0x71,
+	0x0b, 0x21, 0x2a, 0x25, 0x81, 0x70, 0x48, 0xcd, 0xcc, 0xfe, 0x55, 0x8d, 0xac, 0x64, 0x70, 0x13,
+	0x55, 0x83, 0x19, 0x04, 0x57, 0x3a, 0x8e, 0xdc, 0xb2, 0xad, 0x2e, 0x62, 0x8c, 0x51, 0x45, 0xb3,
+	0x8f, 0xe0, 0x56, 0xda, 0x4e, 0xa7, 0x4c, 0xec, 0x19, 0x7b, 0xa8, 0x0c, 0x3c, 0x71, 0x37, 0xdb,
+	0xe5, 0x4e, 0xbd, 0xd7, 0x28, 0x38, 0xf7, 0x79, 0xd2, 0xe7, 0x46, 0xcd, 0x49, 0x5a, 0xf4, 0x8e,
+	0x50, 0xb5, 0x48, 0xa4, 0x18, 0x7c, 0x49, 0xcb, 0x9e, 0xf1, 0x1f, 0x68, 0x33, 0xa1, 0x61, 0x0c,
+	0x39, 0x9d, 0x2c, 0xf0, 0xbe, 0x38, 0xa8, 0xb1, 0xd4, 0xa7, 0xa5, 0xe0, 0x1a, 0xf0, 0x3e, 0xaa,
+	0x45, 0x79, 0x4e, 0xbb, 0x4e, 0xbb, 0xdc, 0xa9, 0x91, 0x65, 0x22, 0x15, 0xa7, 0x45, 0xac, 0x02,
+	0x78, 0x3d, 0x97, 0x05, 0xda, 0x4a, 0x26, 0x15, 0xa7, 0x20, 0x61, 0x9a, 0x09, 0x5e, 0x88, 0x2b,
+	0x62, 0xec, 0xa1, 0x9d, 0x04, 0x14, 0x9b, 0xcc, 0x09, 0xe8, 0x38, 0x34, 0x56, 0x64, 0x8d, 0xdc,
+	0xc8, 0x79, 0x13, 0x84, 0xc9, 0xc2, 0x26, 0x0b, 0x4e, 0x6d, 0x54, 0x67, 0xfa, 0x32, 0x96, 0x52,
+	0x28, 0x03, 0x63, 0xab, 0xac, 0x4a, 0x56, 0x53, 0xd8, 0x47, 0x98, 0xe9, 0xe7, 0x4c, 0x07, 0x22,
+	0x01, 0x35, 0xef, 0x73, 0x3a, 0x0a, 0x61, 0x6c, 0xf9, 0x55, 0xc9, 0x9a, 0x8a, 0xf7, 0x09, 0xb5,
+	0x86, 0x54, 0xd1, 0x08, 0x0c, 0x28, 0x7d, 0xcc, 0xb9, 0x88, 0x79, 0x00, 0x11, 0xf0, 0xe5, 0x1c,
+	0xde, 0xa0, 0x3d, 0x59, 0x74, 0xac, 0x36, 0x64, 0x43, 0xa9, 0xf7, 0xfe, 0xf3, 0x57, 0xfc, 0x3c,
+	0x5c, 0xd7, 0x49, 0xee, 0x01, 0xf0, 0xf6, 0x51, 0x25, 0xb5, 0x5c, 0xfa, 0x2a, 0xc1, 0x2c, 0xe6,
+	0x57, 0x56, 0xd0, 0x0e, 0xc9, 0x02, 0xef, 0xab, 0x83, 0xda, 0xa7, 0xa9, 0x21, 0x86, 0xf6, 0xa5,
+	0x4f, 0x05, 0x9f, 0xb0, 0x69, 0xac, 0xa8, 0x61, 0x82, 0x2f, 0xd8, 0x1d, 0xa1, 0x3f, 0x57, 0x54,
+	0x15, 0x3d, 0x8b, 0xd9, 0xac, 0x2f, 0xe2, 0x0e, 0xda, 0x95, 0x4a, 0x24, 0x6c, 0x0c, 0xe7, 0xcc,
+	0x9c, 0x2a, 0x18, 0xeb, 0x7c, 0x44, 0xb7, 0xd3, 0xe9, 0x5b, 0xcd, 0x28, 0x1f, 0x87, 0xa0, 0xcf,
+	0xc0, 0x04, 0x33, 0xfb, 0x96, 0x55, 0x72, 0x23, 0xd7, 0xfb, 0xb5, 0x81, 0x0e, 0x32, 0xf0, 0x01,
+	0xe5, 0x74, 0x6a, 0xc5, 0x65, 0x9c, 0x2f, 0x41, 0x25, 0x2c, 0x00, 0xfc, 0x02, 0x35, 0xce, 0x81,
+	0x83, 0xa2, 0x06, 0x0a, 0x9f, 0x61, 0xb7, 0x70, 0xf0, 0xed, 0x8f, 0xbb, 0xe9, 0xde, 0xfd, 0x94,
+	0x33, 0xb5, 0x5e, 0xa9, 0xe3, 0xe0, 0x77, 0xc8, 0xbd, 0x6f, 0x2a, 0x78, 0xcf, 0xcf, 0x36, 0x89,
+	0x5f, 0x6c, 0x12, 0xbf, 0x9f, 0x6e, 0x92, 0x66, 0xa7, 0x40, 0x7c, 0x6c, 0x9e, 0x5e, 0x09, 0xbf,
+	0x44, 0xbb, 0x03, 0x6a, 0x82, 0xd9, 0xd2, 0x7e, 0x0f, 0x50, 0x6d, 0x16, 0x95, 0xbb, 0x66, 0xb5,
+	0x64, 0x29, 0xfa, 0xfb, 0x1c, 0xcc, 0x7a, 0x87, 0x3d, 0x00, 0xfb, 0x7f, 0x51, 0x79, 0xd8, 0x9b,
+	0xe9, 0x5f, 0x9c, 0x3c, 0xfb, 0x7e, 0xdd, 0x72, 0x7e, 0x5c, 0xb7, 0x9c, 0x9f, 0xd7, 0x2d, 0xe7,
+	0x6d, 0xef, 0x91, 0x8d, 0xbc, 0xdc, 0xeb, 0x54, 0xb2, 0x20, 0x64, 0xc0, 0xcd, 0x68, 0xcb, 0x4e,
+	0xeb, 0xf0, 0x77, 0x00, 0x00, 0x00, 0xff, 0xff, 0xe2, 0xa6, 0x55, 0x30, 0xf5, 0x05, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -1096,6 +1238,32 @@ func (m *ManifestResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i -= len(m.XXX_unrecognized)
 		copy(dAtA[i:], m.XXX_unrecognized)
 	}
+	if m.SourceMetadata != nil {
+		{
+			size, err := m.SourceMetadata.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintPlugin(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x2a
+	}
+	if len(m.VerifyResult) > 0 {
+		i -= len(m.VerifyResult)
+		copy(dAtA[i:], m.VerifyResult)
+		i = encodeVarintPlugin(dAtA, i, uint64(len(m.VerifyResult)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if len(m.Revision) > 0 {
+		i -= len(m.Revision)
+		copy(dAtA[i:], m.Revision)
+		i = encodeVarintPlugin(dAtA, i, uint64(len(m.Revision)))
+		i--
+		dAtA[i] = 0x1a
+	}
 	if len(m.SourceType) > 0 {
 		i -= len(m.SourceType)
 		copy(dAtA[i:], m.SourceType)
@@ -1111,6 +1279,75 @@ func (m *ManifestResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 			i--
 			dAtA[i] = 0xa
 		}
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *SourceMetadata) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *SourceMetadata) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *SourceMetadata) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.XXX_unrecognized != nil {
+		i -= len(m.XXX_unrecognized)
+		copy(dAtA[i:], m.XXX_unrecognized)
+	}
+	if len(m.DocsURL) > 0 {
+		i -= len(m.DocsURL)
+		copy(dAtA[i:], m.DocsURL)
+		i = encodeVarintPlugin(dAtA, i, uint64(len(m.DocsURL)))
+		i--
+		dAtA[i] = 0x32
+	}
+	if len(m.SourceURL) > 0 {
+		i -= len(m.SourceURL)
+		copy(dAtA[i:], m.SourceURL)
+		i = encodeVarintPlugin(dAtA, i, uint64(len(m.SourceURL)))
+		i--
+		dAtA[i] = 0x2a
+	}
+	if len(m.Description) > 0 {
+		i -= len(m.Description)
+		copy(dAtA[i:], m.Description)
+		i = encodeVarintPlugin(dAtA, i, uint64(len(m.Description)))
+		i--
+		dAtA[i] = 0x22
+	}
+	if len(m.Version) > 0 {
+		i -= len(m.Version)
+		copy(dAtA[i:], m.Version)
+		i = encodeVarintPlugin(dAtA, i, uint64(len(m.Version)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if len(m.Authors) > 0 {
+		i -= len(m.Authors)
+		copy(dAtA[i:], m.Authors)
+		i = encodeVarintPlugin(dAtA, i, uint64(len(m.Authors)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.CreatedAt) > 0 {
+		i -= len(m.CreatedAt)
+		copy(dAtA[i:], m.CreatedAt)
+		i = encodeVarintPlugin(dAtA, i, uint64(len(m.CreatedAt)))
+		i--
+		dAtA[i] = 0xa
 	}
 	return len(dAtA) - i, nil
 }
@@ -1261,6 +1498,16 @@ func (m *CheckPluginConfigurationResponse) MarshalToSizedBuffer(dAtA []byte) (in
 		i -= len(m.XXX_unrecognized)
 		copy(dAtA[i:], m.XXX_unrecognized)
 	}
+	if m.HandlesFetch {
+		i--
+		if m.HandlesFetch {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x18
+	}
 	if m.ProvideGitCreds {
 		i--
 		if m.ProvideGitCreds {
@@ -1403,6 +1650,54 @@ func (m *ManifestResponse) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovPlugin(uint64(l))
 	}
+	l = len(m.Revision)
+	if l > 0 {
+		n += 1 + l + sovPlugin(uint64(l))
+	}
+	l = len(m.VerifyResult)
+	if l > 0 {
+		n += 1 + l + sovPlugin(uint64(l))
+	}
+	if m.SourceMetadata != nil {
+		l = m.SourceMetadata.Size()
+		n += 1 + l + sovPlugin(uint64(l))
+	}
+	if m.XXX_unrecognized != nil {
+		n += len(m.XXX_unrecognized)
+	}
+	return n
+}
+
+func (m *SourceMetadata) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.CreatedAt)
+	if l > 0 {
+		n += 1 + l + sovPlugin(uint64(l))
+	}
+	l = len(m.Authors)
+	if l > 0 {
+		n += 1 + l + sovPlugin(uint64(l))
+	}
+	l = len(m.Version)
+	if l > 0 {
+		n += 1 + l + sovPlugin(uint64(l))
+	}
+	l = len(m.Description)
+	if l > 0 {
+		n += 1 + l + sovPlugin(uint64(l))
+	}
+	l = len(m.SourceURL)
+	if l > 0 {
+		n += 1 + l + sovPlugin(uint64(l))
+	}
+	l = len(m.DocsURL)
+	if l > 0 {
+		n += 1 + l + sovPlugin(uint64(l))
+	}
 	if m.XXX_unrecognized != nil {
 		n += len(m.XXX_unrecognized)
 	}
@@ -1471,6 +1766,9 @@ func (m *CheckPluginConfigurationResponse) Size() (n int) {
 		n += 2
 	}
 	if m.ProvideGitCreds {
+		n += 2
+	}
+	if m.HandlesFetch {
 		n += 2
 	}
 	if m.XXX_unrecognized != nil {
@@ -2014,6 +2312,349 @@ func (m *ManifestResponse) Unmarshal(dAtA []byte) error {
 			}
 			m.SourceType = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Revision", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPlugin
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Revision = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field VerifyResult", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPlugin
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.VerifyResult = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SourceMetadata", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPlugin
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.SourceMetadata == nil {
+				m.SourceMetadata = &SourceMetadata{}
+			}
+			if err := m.SourceMetadata.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipPlugin(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *SourceMetadata) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowPlugin
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: SourceMetadata: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: SourceMetadata: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CreatedAt", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPlugin
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.CreatedAt = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Authors", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPlugin
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Authors = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Version", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPlugin
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Version = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Description", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPlugin
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Description = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SourceURL", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPlugin
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.SourceURL = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DocsURL", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPlugin
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPlugin
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.DocsURL = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipPlugin(dAtA[iNdEx:])
@@ -2366,6 +3007,26 @@ func (m *CheckPluginConfigurationResponse) Unmarshal(dAtA []byte) error {
 				}
 			}
 			m.ProvideGitCreds = bool(v != 0)
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field HandlesFetch", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPlugin
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.HandlesFetch = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := skipPlugin(dAtA[iNdEx:])

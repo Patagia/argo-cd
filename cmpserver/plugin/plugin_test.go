@@ -54,6 +54,12 @@ func withDiscover(d Discover) pluginOpt {
 	}
 }
 
+func withFetch(c Command) pluginOpt {
+	return func(cic *CMPServerInitConstants) {
+		cic.PluginConfig.Spec.Fetch = c
+	}
+}
+
 func buildPluginConfig(opts ...pluginOpt) *CMPServerInitConstants {
 	cic := &CMPServerInitConstants{
 		PluginConfig: PluginConfig{
@@ -886,5 +892,117 @@ func TestService_CheckPluginConfiguration(t *testing.T) {
 		// then
 		require.NoError(t, err)
 		assert.False(t, resp.IsDiscoveryConfigured)
+	})
+
+	t.Run("handles fetch is true when fetch command is configured", func(t *testing.T) {
+		// given
+		f := setup(t, withFetch(Command{Command: []string{"fetch-script"}}))
+
+		// when
+		resp, err := f.service.CheckPluginConfiguration(t.Context(), &empty.Empty{})
+
+		// then
+		require.NoError(t, err)
+		assert.True(t, resp.HandlesFetch)
+	})
+
+	t.Run("handles fetch is false when fetch command is not configured", func(t *testing.T) {
+		// given
+		f := setup(t)
+
+		// when
+		resp, err := f.service.CheckPluginConfiguration(t.Context(), &empty.Empty{})
+
+		// then
+		require.NoError(t, err)
+		assert.False(t, resp.HandlesFetch)
+	})
+}
+
+func TestGenerateManifest_WithFetch(t *testing.T) {
+	t.Parallel()
+
+	manifest := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fetched-map`
+
+	t.Run("fetch command runs before generate", func(t *testing.T) {
+		t.Parallel()
+		// fetch writes a manifest; generate reads and outputs it
+		cic := buildPluginConfig(
+			withFetch(Command{Command: []string{"sh", "-c"}, Args: []string{`printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: fetched-map\n' > manifest.yaml`}}),
+		)
+		cic.PluginConfig.Spec.Generate = Command{Command: []string{"sh", "-c"}, Args: []string{"cat manifest.yaml"}}
+		s := NewService(*cic)
+
+		appDir := t.TempDir()
+		resp, err := s.generateManifest(t.Context(), appDir, nil)
+		require.NoError(t, err)
+		require.Len(t, resp.Manifests, 1)
+		assert.Contains(t, resp.Manifests[0], "fetched-map")
+	})
+
+	t.Run("fetch error prevents generate from running", func(t *testing.T) {
+		t.Parallel()
+		cic := buildPluginConfig(
+			withFetch(Command{Command: []string{"false"}}),
+		)
+		cic.PluginConfig.Spec.Generate = Command{Command: []string{"echo", manifest}}
+		s := NewService(*cic)
+
+		appDir := t.TempDir()
+		_, err := s.generateManifest(t.Context(), appDir, nil)
+		require.Error(t, err)
+	})
+
+	t.Run("init is skipped when fetch is configured", func(t *testing.T) {
+		t.Parallel()
+		// init would fail if it ran; the test passes only if init is skipped
+		cic := buildPluginConfig(
+			withFetch(Command{Command: []string{"sh", "-c"}, Args: []string{`printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: fetched-map\n' > manifest.yaml`}}),
+		)
+		cic.PluginConfig.Spec.Init = Command{Command: []string{"false"}}
+		cic.PluginConfig.Spec.Generate = Command{Command: []string{"sh", "-c"}, Args: []string{"cat manifest.yaml"}}
+		s := NewService(*cic)
+
+		appDir := t.TempDir()
+		resp, err := s.generateManifest(t.Context(), appDir, nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, resp.Manifests)
+	})
+
+	t.Run("app dir is created by fetch phase when it does not exist", func(t *testing.T) {
+		t.Parallel()
+		// appDir points to a non-existent subdirectory; generateManifest must create it
+		cic := buildPluginConfig(
+			withFetch(Command{Command: []string{"sh", "-c"}, Args: []string{`printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: fetched-map\n' > manifest.yaml`}}),
+		)
+		cic.PluginConfig.Spec.Generate = Command{Command: []string{"sh", "-c"}, Args: []string{"cat manifest.yaml"}}
+		s := NewService(*cic)
+
+		appDir := filepath.Join(t.TempDir(), "subdir-that-does-not-exist")
+		resp, err := s.generateManifest(t.Context(), appDir, nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, resp.Manifests)
+	})
+
+	t.Run("fetch result file is read and returned in response", func(t *testing.T) {
+		t.Parallel()
+		// fetch writes the manifest and the structured result file; generateManifest should
+		// populate Revision and VerifyResult from the file.
+		fetchScript := `printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: fetched-map\n' > manifest.yaml && ` +
+			`printf '{"revision":"sha256:abc123","verifyResult":"OK"}' > ` + cmp.FetchResultFile
+		cic := buildPluginConfig(
+			withFetch(Command{Command: []string{"sh", "-c"}, Args: []string{fetchScript}}),
+		)
+		cic.PluginConfig.Spec.Generate = Command{Command: []string{"sh", "-c"}, Args: []string{"cat manifest.yaml"}}
+		s := NewService(*cic)
+
+		appDir := t.TempDir()
+		resp, err := s.generateManifest(t.Context(), appDir, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "sha256:abc123", resp.Revision)
+		assert.Equal(t, "OK", resp.VerifyResult)
 	})
 }

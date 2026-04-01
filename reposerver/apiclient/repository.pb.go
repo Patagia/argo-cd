@@ -711,10 +711,14 @@ type ManifestResponse struct {
 	// Raw response of git verify-commit operation (always the empty string for Helm)
 	VerifyResult string `protobuf:"bytes,7,opt,name=verifyResult,proto3" json:"verifyResult,omitempty"`
 	// Commands is the list of commands used to hydrate the manifests
-	Commands             []string `protobuf:"bytes,8,rep,name=commands,proto3" json:"commands,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
+	Commands []string `protobuf:"bytes,8,rep,name=commands,proto3" json:"commands,omitempty"`
+	// SourceMetadata contains optional human-readable metadata about the fetched source,
+	// populated by fetch-capable CMP plugins (spec.fetch). Not transmitted over gRPC; stored
+	// in the manifest cache so it can be served via GetOCIMetadata for the UI revision panel.
+	SourceMetadata       *v1alpha1.OCIMetadata `json:"sourceMetadata,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}              `json:"-"`
+	XXX_unrecognized     []byte                `json:"-"`
+	XXX_sizecache        int32                 `json:"-"`
 }
 
 func (m *ManifestResponse) Reset()         { *m = ManifestResponse{} }

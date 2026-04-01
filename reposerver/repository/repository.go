@@ -667,7 +667,36 @@ func (s *Service) GenerateManifest(ctx context.Context, q *apiclient.ManifestReq
 	}
 
 	settings := operationSettings{sem: s.parallelismLimitSemaphore, noCache: q.NoCache, noRevisionCache: q.NoRevisionCache, allowConcurrent: q.ApplicationSource.AllowsConcurrentProcessing()}
-	err = s.runRepoOperation(ctx, q.Revision, q.Repo, q.ApplicationSource, q.VerifySignature, cacheFn, operation, settings, q.HasMultipleSources, q.RefSources)
+
+	// Pre-flight: if the explicitly named plugin declares it handles source fetching itself,
+	// bypass runRepoOperation entirely so no git clone is attempted for sources like oci://image:tag.
+	fetchBypassed := false
+	if q.ApplicationSource.Plugin != nil && q.ApplicationSource.Plugin.Name != "" {
+		pluginName := q.ApplicationSource.Plugin.Name
+		if handlesFetch, checkErr := checkNamedPluginHandlesFetch(ctx, pluginName); checkErr == nil && handlesFetch {
+			// Check manifest cache before bypassing fetch.
+			revision := textutils.FirstNonEmpty(q.Revision, q.ApplicationSource.TargetRevision)
+			if !settings.noCache {
+				if ok, cacheErr := cacheFn(revision, cache.ResolvedRevisions{}, true); ok {
+					return res, cacheErr
+				}
+			}
+			tmpDir, tmpErr := files.CreateTempDir(os.TempDir())
+			if tmpErr != nil {
+				return nil, fmt.Errorf("error creating temp dir for fetch-capable plugin: %w", tmpErr)
+			}
+			defer func() { _ = os.RemoveAll(tmpDir) }()
+			err = operation(tmpDir, revision, revision, func() (*operationContext, error) {
+				return &operationContext{appPath: tmpDir}, nil
+			})
+			fetchBypassed = true
+		} else if checkErr != nil {
+			log.Debugf("could not check fetch capability for named plugin %q, falling back to standard fetch: %v", pluginName, checkErr)
+		}
+	}
+	if !fetchBypassed {
+		err = s.runRepoOperation(ctx, q.Revision, q.Repo, q.ApplicationSource, q.VerifySignature, cacheFn, operation, settings, q.HasMultipleSources, q.RefSources)
+	}
 
 	// if the tarDoneCh message is sent it means that the manifest
 	// generation is being managed by the cmp-server. In this case
@@ -974,8 +1003,29 @@ func (s *Service) runManifestGenAsync(ctx context.Context, repoRoot, commitSHA, 
 		FirstFailureTimestamp:           0,
 		MostRecentError:                 "",
 	}
-	manifestGenResult.Revision = commitSHA
-	manifestGenResult.VerifyResult = opContext.verificationResult
+	// Prefer values reported by a fetch-capable CMP plugin (e.g. an OCI digest) over the
+	// default git commitSHA / verify-commit output. Fall back to git values when the plugin
+	// did not provide them.
+	if manifestGenResult.Revision == "" {
+		manifestGenResult.Revision = commitSHA
+	}
+	if manifestGenResult.VerifyResult == "" {
+		manifestGenResult.VerifyResult = opContext.verificationResult
+	}
+	// Cache source metadata reported by fetch-capable CMP plugins so GetOCIMetadata can serve
+	// it for the UI revision panel without hitting the OCI registry.
+	// Store under both the resolved revision (e.g. OCI digest) and the original cacheKey (e.g.
+	// the raw tag like "app") so lookups succeed regardless of which form GetOCIMetadata receives.
+	if manifestGenResult.SourceMetadata != nil && q.Repo != nil && manifestGenResult.Revision != "" {
+		if cacheErr := s.cache.SetPluginSourceMetadata(q.Repo.Repo, manifestGenResult.Revision, manifestGenResult.SourceMetadata); cacheErr != nil {
+			log.Warnf("failed to cache plugin source metadata for %s@%s: %v", q.Repo.Repo, manifestGenResult.Revision, cacheErr)
+		}
+		if cacheKey != manifestGenResult.Revision {
+			if cacheErr := s.cache.SetPluginSourceMetadata(q.Repo.Repo, cacheKey, manifestGenResult.SourceMetadata); cacheErr != nil {
+				log.Warnf("failed to cache plugin source metadata for %s@%s: %v", q.Repo.Repo, cacheKey, cacheErr)
+			}
+		}
+	}
 	err = s.cache.SetManifests(cacheKey, appSourceCopy, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, &manifestGenCacheEntry, refSourceCommitSHAs, q.InstallationID)
 	if err != nil {
 		log.Warnf("manifest cache set error %s/%s: %v", appSourceCopy.String(), cacheKey, err)
@@ -1680,6 +1730,7 @@ func WithCMPUseManifestGeneratePaths(enabled bool) GenerateManifestOpt {
 func GenerateManifests(ctx context.Context, appPath, repoRoot, revision string, q *apiclient.ManifestRequest, isLocal bool, gitCredsStore git.CredsStore, maxCombinedManifestQuantity resource.Quantity, gitRepoPaths utilio.TempPaths, opts ...GenerateManifestOpt) (*apiclient.ManifestResponse, error) {
 	opt := newGenerateManifestOpt(opts...)
 	var targetObjs []*unstructured.Unstructured
+	var pluginMeta *cmpPluginMeta
 
 	resourceTracking := argo.NewResourceTracking()
 
@@ -1726,7 +1777,7 @@ func GenerateManifests(ctx context.Context, appPath, repoRoot, revision string, 
 			pluginName = q.ApplicationSource.Plugin.Name
 		}
 		// if pluginName is provided it has to be `<metadata.name>-<spec.version>` or just `<metadata.name>` if plugin version is empty
-		targetObjs, err = runConfigManagementPluginSidecars(ctx, appPath, repoRoot, pluginName, env, q, q.Repo.GetGitCreds(gitCredsStore), opt.cmpTarDoneCh, opt.cmpTarExcludedGlobs, opt.cmpUseManifestGeneratePaths)
+		targetObjs, pluginMeta, err = runConfigManagementPluginSidecars(ctx, appPath, repoRoot, pluginName, env, q, q.Repo.GetGitCreds(gitCredsStore), opt.cmpTarDoneCh, opt.cmpTarExcludedGlobs, opt.cmpUseManifestGeneratePaths)
 		if err != nil {
 			return nil, fmt.Errorf("CMP processing failed for application %q: %w", q.AppName, err)
 		}
@@ -1783,11 +1834,20 @@ func GenerateManifests(ctx context.Context, appPath, repoRoot, revision string, 
 		}
 	}
 
-	return &apiclient.ManifestResponse{
+	resp := &apiclient.ManifestResponse{
 		Manifests:  manifests,
 		SourceType: string(appSourceType),
 		Commands:   commands,
-	}, nil
+	}
+	// When a fetch-capable CMP plugin reported structured metadata (resolved revision, verify
+	// result, source metadata), propagate it so runManifestGenAsync can prefer it over the
+	// default git values and cache the source metadata for the UI.
+	if pluginMeta != nil {
+		resp.Revision = pluginMeta.Revision
+		resp.VerifyResult = pluginMeta.VerifyResult
+		resp.SourceMetadata = pluginMeta.SourceMetadata
+	}
+	return resp, nil
 }
 
 func newEnv(q *apiclient.ManifestRequest, revision string) *v1alpha1.Env {
@@ -2277,17 +2337,29 @@ func getPluginParamEnvs(envVars []string, plugin *v1alpha1.ApplicationSourcePlug
 	return env, nil
 }
 
-func runConfigManagementPluginSidecars(ctx context.Context, appPath, repoPath, pluginName string, envVars *v1alpha1.Env, q *apiclient.ManifestRequest, creds git.Creds, tarDoneCh chan<- bool, tarExcludedGlobs []string, useManifestGeneratePaths bool) ([]*unstructured.Unstructured, error) {
+// cmpPluginMeta carries optional metadata returned by a fetch-capable CMP plugin alongside the
+// generated manifests. It is populated from the plugin's ManifestResponse when the plugin declares
+// HandlesFetch=true and writes .argocd-cmp-fetch-result.json during its fetch/generate phase.
+type cmpPluginMeta struct {
+	// Revision is the resolved content digest (e.g. "sha256:…") reported by the plugin.
+	Revision string
+	// VerifyResult is the source-verification output (e.g. cosign output) reported by the plugin.
+	VerifyResult string
+	// SourceMetadata contains optional human-readable metadata about the fetched source.
+	SourceMetadata *v1alpha1.OCIMetadata
+}
+
+func runConfigManagementPluginSidecars(ctx context.Context, appPath, repoPath, pluginName string, envVars *v1alpha1.Env, q *apiclient.ManifestRequest, creds git.Creds, tarDoneCh chan<- bool, tarExcludedGlobs []string, useManifestGeneratePaths bool) ([]*unstructured.Unstructured, *cmpPluginMeta, error) {
 	// compute variables.
 	env, err := getPluginEnvs(envVars, q)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// detect config management plugin server
 	conn, cmpClient, err := discovery.DetectConfigManagementPlugin(ctx, appPath, repoPath, pluginName, env, tarExcludedGlobs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer utilio.Close(conn)
 
@@ -2300,14 +2372,14 @@ func runConfigManagementPluginSidecars(ctx context.Context, appPath, repoPath, p
 
 	pluginConfigResponse, err := cmpClient.CheckPluginConfiguration(ctx, &emptypb.Empty{})
 	if err != nil {
-		return nil, fmt.Errorf("error calling cmp-server checkPluginConfiguration: %w", err)
+		return nil, nil, fmt.Errorf("error calling cmp-server checkPluginConfiguration: %w", err)
 	}
 
 	if pluginConfigResponse.ProvideGitCreds {
 		if creds != nil {
 			closer, environ, err := creds.Environ()
 			if err != nil {
-				return nil, fmt.Errorf("failed to retrieve git creds environment variables: %w", err)
+				return nil, nil, fmt.Errorf("failed to retrieve git creds environment variables: %w", err)
 			}
 			defer func() { _ = closer.Close() }()
 			env = append(env, environ...)
@@ -2315,9 +2387,16 @@ func runConfigManagementPluginSidecars(ctx context.Context, appPath, repoPath, p
 	}
 
 	// generate manifests using commands provided in plugin config file in detected cmp-server sidecar
-	cmpManifests, err := generateManifestsCMP(ctx, appPath, rootPath, env, cmpClient, tarDoneCh, tarExcludedGlobs)
+	var cmpManifests *pluginclient.ManifestResponse
+	if pluginConfigResponse.HandlesFetch {
+		// Plugin manages its own source fetching. Send only metadata (no file tgz) and
+		// signal that no tarring is needed so the repo lock can be released immediately.
+		cmpManifests, err = generateManifestsCMPFetch(ctx, appPath, rootPath, env, cmpClient, tarDoneCh)
+	} else {
+		cmpManifests, err = generateManifestsCMP(ctx, appPath, rootPath, env, cmpClient, tarDoneCh, tarExcludedGlobs)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("error generating manifests in cmp: %w", err)
+		return nil, nil, fmt.Errorf("error generating manifests in cmp: %w", err)
 	}
 	var manifests []*unstructured.Unstructured
 	for _, manifestString := range cmpManifests.Manifests {
@@ -2328,11 +2407,70 @@ func runConfigManagementPluginSidecars(ctx context.Context, appPath, repoPath, p
 				sanitizedManifestString = sanitizedManifestString[:1000]
 			}
 			log.Debugf("Failed to convert generated manifests. Beginning of generated manifests: %q", sanitizedManifestString)
-			return nil, fmt.Errorf("failed to convert CMP manifests to unstructured objects: %s", err.Error())
+			return nil, nil, fmt.Errorf("failed to convert CMP manifests to unstructured objects: %s", err.Error())
 		}
 		manifests = append(manifests, manifestObjs...)
 	}
-	return manifests, nil
+
+	// Capture any metadata the plugin reported (only populated for fetch-capable plugins).
+	var meta *cmpPluginMeta
+	if cmpManifests.Revision != "" || cmpManifests.VerifyResult != "" || cmpManifests.SourceMetadata != nil {
+		meta = &cmpPluginMeta{
+			Revision:     cmpManifests.Revision,
+			VerifyResult: cmpManifests.VerifyResult,
+		}
+		if sm := cmpManifests.SourceMetadata; sm != nil {
+			meta.SourceMetadata = &v1alpha1.OCIMetadata{
+				CreatedAt:   sm.CreatedAt,
+				Authors:     sm.Authors,
+				Version:     sm.Version,
+				Description: sm.Description,
+				SourceURL:   sm.SourceURL,
+				DocsURL:     sm.DocsURL,
+			}
+		}
+	}
+	return manifests, meta, nil
+}
+
+// checkNamedPluginHandlesFetch connects to the named CMP plugin and returns true if it
+// declares HandlesFetch=true in CheckPluginConfiguration. Used as a pre-flight before
+// runRepoOperation so that sources the plugin fetches itself (e.g. oci://image:tag) do not
+// trigger an unnecessary git clone attempt.
+func checkNamedPluginHandlesFetch(ctx context.Context, pluginName string) (bool, error) {
+	pluginSockFilePath := common.GetPluginSockFilePath()
+	address := filepath.Join(pluginSockFilePath, fmt.Sprintf("%s.sock", pluginName))
+	cmpclientset := pluginclient.NewConfigManagementPluginClientSet(address)
+	conn, cmpClient, err := cmpclientset.NewConfigManagementPluginClient()
+	if err != nil {
+		return false, fmt.Errorf("error connecting to plugin %q: %w", pluginName, err)
+	}
+	defer utilio.Close(conn)
+	cfg, err := cmpClient.CheckPluginConfiguration(ctx, &emptypb.Empty{})
+	if err != nil {
+		return false, fmt.Errorf("error checking plugin configuration for %q: %w", pluginName, err)
+	}
+	return cfg.GetHandlesFetch(), nil
+}
+
+// generateManifestsCMPFetch sends only stream metadata to a plugin that declares it handles
+// source fetching itself (HandlesFetch=true). No file tarball is sent. The tarDoneCh is
+// signaled immediately since no tarring occurs, releasing any repo lock promptly.
+func generateManifestsCMPFetch(ctx context.Context, appPath, rootPath string, env []string, cmpClient pluginclient.ConfigManagementPluginServiceClient, tarDoneCh chan<- bool) (*pluginclient.ManifestResponse, error) {
+	// No tarring needed; release the repo lock now.
+	if tarDoneCh != nil {
+		tarDoneCh <- true
+		close(tarDoneCh)
+	}
+	generateManifestStream, err := cmpClient.GenerateManifest(ctx, grpc_retry.Disable())
+	if err != nil {
+		return nil, fmt.Errorf("error getting generateManifestStream: %w", err)
+	}
+	err = cmp.SendMetadataOnlyStream(ctx, appPath, rootPath, generateManifestStream, env)
+	if err != nil {
+		return nil, fmt.Errorf("error sending metadata to cmp-server: %w", err)
+	}
+	return generateManifestStream.CloseAndRecv()
 }
 
 // generateManifestsCMP will send the appPath files to the cmp-server over a gRPC stream.
@@ -2730,6 +2868,12 @@ func (s *Service) GetRevisionMetadata(_ context.Context, q *apiclient.RepoServer
 }
 
 func (s *Service) GetOCIMetadata(ctx context.Context, q *apiclient.RepoServerRevisionChartDetailsRequest) (*v1alpha1.OCIMetadata, error) {
+	// Check whether a fetch-capable CMP plugin cached source metadata for this source during
+	// manifest generation. If found, return it directly instead of querying the OCI registry.
+	if pluginMeta, err := s.cache.GetPluginSourceMetadata(q.Repo.Repo, q.Revision); err == nil {
+		return pluginMeta, nil
+	}
+
 	client, err := s.newOCIClient(q.Repo.Repo, q.Repo.GetOCICreds(), q.Repo.Proxy, q.Repo.NoProxy, s.initConstants.OCIMediaTypes, s.ociClientStandardOpts()...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize oci client: %w", err)

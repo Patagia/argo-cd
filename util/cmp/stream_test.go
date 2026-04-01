@@ -82,6 +82,96 @@ func TestReceiveApplicationStream(t *testing.T) {
 	})
 }
 
+// capturingSender records every AppStreamRequest sent through it.
+type capturingSender struct {
+	sent []*pluginclient.AppStreamRequest
+}
+
+func (c *capturingSender) Send(req *pluginclient.AppStreamRequest) error {
+	c.sent = append(c.sent, req)
+	return nil
+}
+
+func TestSendMetadataOnlyStream(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sends exactly one metadata message with no checksum or size", func(t *testing.T) {
+		t.Parallel()
+		rootDir := t.TempDir()
+		appDir := filepath.Join(rootDir, "myapp")
+		require.NoError(t, os.Mkdir(appDir, 0o755))
+
+		sender := &capturingSender{}
+		err := cmp.SendMetadataOnlyStream(t.Context(), appDir, rootDir, sender, []string{"FOO=bar"})
+		require.NoError(t, err)
+
+		require.Len(t, sender.sent, 1, "should send exactly one message")
+		meta := sender.sent[0].GetMetadata()
+		require.NotNil(t, meta, "message should carry metadata")
+		assert.Equal(t, "myapp", meta.AppName)
+		assert.Equal(t, "", meta.Checksum, "no checksum for metadata-only stream")
+		assert.EqualValues(t, 0, meta.Size_, "no size for metadata-only stream")
+		require.Len(t, meta.Env, 1)
+		assert.Equal(t, "FOO", meta.Env[0].Name)
+		assert.Equal(t, "bar", meta.Env[0].Value)
+	})
+}
+
+func TestReceiveMetadataOnlyStream(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns metadata from the first stream message", func(t *testing.T) {
+		t.Parallel()
+		m := newStreamMock()
+		go func() {
+			m.messages <- &pluginclient.AppStreamRequest{
+				Request: &pluginclient.AppStreamRequest_Metadata{
+					Metadata: &pluginclient.ManifestRequestMetadata{
+						AppName:    "myapp",
+						AppRelPath: ".",
+						Env:        []*pluginclient.EnvEntry{{Name: "FOO", Value: "bar"}},
+					},
+				},
+			}
+		}()
+
+		meta, err := cmp.ReceiveMetadataOnlyStream(t.Context(), m)
+		require.NoError(t, err)
+		require.NotNil(t, meta)
+		assert.Equal(t, "myapp", meta.AppName)
+		require.Len(t, meta.Env, 1)
+		assert.Equal(t, "bar", meta.Env[0].Value)
+	})
+
+	t.Run("returns error when metadata is nil", func(t *testing.T) {
+		t.Parallel()
+		m := newStreamMock()
+		go func() {
+			// Send a file chunk instead of metadata — metadata will be nil
+			m.messages <- &pluginclient.AppStreamRequest{
+				Request: &pluginclient.AppStreamRequest_File{
+					File: &pluginclient.File{Chunk: []byte("data")},
+				},
+			}
+		}()
+
+		_, err := cmp.ReceiveMetadataOnlyStream(t.Context(), m)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "metadata is nil")
+	})
+
+	t.Run("returns error when stream ends without sending a message", func(t *testing.T) {
+		t.Parallel()
+		m := newStreamMock()
+		go func() {
+			m.done <- true
+		}()
+
+		_, err := cmp.ReceiveMetadataOnlyStream(t.Context(), m)
+		require.Error(t, err)
+	})
+}
+
 func (m *streamMock) sendFile(ctx context.Context, t *testing.T, basedir string, sender cmp.StreamSender, env []string, excludedGlobs []string) {
 	t.Helper()
 	defer func() {

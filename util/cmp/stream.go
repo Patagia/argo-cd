@@ -84,6 +84,41 @@ func WithTarDoneChan(ch chan<- bool) SenderOption {
 	}
 }
 
+// SendMetadataOnlyStream sends only the manifest request metadata without any file chunks.
+// Used when the plugin declares it handles source fetching itself (HandlesFetch=true).
+func SendMetadataOnlyStream(ctx context.Context, appPath, rootPath string, sender StreamSender, env []string) error {
+	appRelPath, err := files.RelativePath(appPath, rootPath)
+	if err != nil {
+		return fmt.Errorf("error building app relative path: %w", err)
+	}
+	mr := appMetadataRequest(filepath.Base(appPath), appRelPath, env, "", 0)
+	if err := sender.Send(mr); err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			return fmt.Errorf("error sending fetch manifest metadata to cmp-server: %w (stream ctx err: %w)", err, ctx.Err())
+		}
+		return fmt.Errorf("error sending fetch manifest metadata to cmp-server: %w", err)
+	}
+	return nil
+}
+
+// ReceiveMetadataOnlyStream reads only the metadata header from a stream without extracting
+// any file chunks. Used on the sidecar side when spec.fetch is configured.
+func ReceiveMetadataOnlyStream(ctx context.Context, receiver StreamReceiver) (*pluginclient.ManifestRequestMetadata, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("stream context error: %w", err)
+		}
+	}
+	header, err := receiver.Recv()
+	if err != nil {
+		return nil, fmt.Errorf("error receiving stream header: %w", err)
+	}
+	if header == nil || header.GetMetadata() == nil {
+		return nil, errors.New("error getting stream metadata: metadata is nil")
+	}
+	return header.GetMetadata(), nil
+}
+
 // SendRepoStream will compress the files under the given rootPath and send
 // them using the plugin stream sender.
 func SendRepoStream(ctx context.Context, appPath, rootPath string, sender StreamSender, env []string, excludedGlobs []string, opts ...SenderOption) error {

@@ -23,7 +23,17 @@ type PluginConfig struct {
 }
 
 type PluginConfigSpec struct {
-	Version          string     `json:"version"`
+	Version string `json:"version"`
+	// Fetch is an optional command that the plugin runs to retrieve the source before generate.
+	// When set, ArgoCD skips its own git/OCI fetch and sends only metadata to the plugin sidecar;
+	// the fetch command is responsible for downloading the source into the working directory.
+	//
+	// Constraint: a plugin with spec.fetch configured must be explicitly referenced by name in
+	// the Application resource (spec.source.plugin.name). Auto-discovery is not supported because
+	// ArgoCD cannot stream repository files to discover the plugin when no fetch has occurred yet.
+	//
+	// When spec.fetch is set, spec.init is skipped (fetch subsumes the setup role).
+	Fetch            Command    `json:"fetch,omitempty"`
 	Init             Command    `json:"init,omitempty"`
 	Generate         Command    `json:"generate"`
 	Discover         Discover   `json:"discover"`
@@ -91,6 +101,13 @@ func ValidatePluginConfig(config PluginConfig) error {
 	}
 	if len(config.Spec.Generate.Command) == 0 {
 		return errors.New("invalid plugin configuration file. spec.generate command should be non-empty")
+	}
+	// A plugin with spec.fetch cannot use auto-discovery: ArgoCD has no files to stream to the
+	// plugin for matching before the fetch has occurred. The Application must reference the plugin
+	// by name (spec.source.plugin.name). Configuring spec.discover alongside spec.fetch is
+	// therefore invalid and would silently never match any application.
+	if len(config.Spec.Fetch.Command) > 0 && config.Spec.Discover.IsDefined() {
+		return errors.New("invalid plugin configuration file. spec.fetch and spec.discover are mutually exclusive: a fetch-capable plugin must be referenced by name (spec.source.plugin.name) in the Application resource")
 	}
 	// discovery field is optional as apps can now specify plugin names directly
 	return nil
